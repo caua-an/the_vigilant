@@ -32,6 +32,7 @@ class SessionTest(unittest.TestCase):
                 with patch.dict('os.environ', {'XDG_SESSION_TYPE': 'x11'}):
                     app.toggle_session()
                 app.server.events.put('attempt')
+                root.after_cancel(app.tick_job)
                 with patch('main.play_alert') as play:
                     app.tick()
                     play.assert_not_called()
@@ -125,6 +126,37 @@ class SessionTest(unittest.TestCase):
                 self.assertFalse(app.active)
                 with urlopen(request) as response:
                     self.assertEqual(json.load(response)['domains'], [])
+            finally:
+                app.close()
+
+    def test_multiple_browser_connections_and_firefox_attempt(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('main.PORT', 0):
+            root = tk.Tk()
+            root.withdraw()
+            app = Vigilant(root)
+            try:
+                base = f'http://127.0.0.1:{app.server.server_port}'
+                for name, origin in [('brave', 'chrome-extension://brave'), ('chrome', 'chrome-extension://chrome'), ('firefox', 'moz-extension://firefox')]:
+                    with urlopen(Request(f'{base}/state?browser={name}', headers={'Origin': origin})) as response:
+                        self.assertEqual(response.headers['Access-Control-Allow-Origin'], origin)
+                self.assertEqual(set(app.server.last_seen), {'brave', 'chrome', 'firefox'})
+                with urlopen(Request(f'{base}/attempt', data=b'', headers={'Origin': 'moz-extension://firefox'})) as response:
+                    self.assertEqual(json.load(response), {'ok': True})
+                self.assertEqual(app.server.events.get_nowait(), 'attempt')
+            finally:
+                app.close()
+
+    def test_browser_heartbeat_without_origin(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('main.PORT', 0):
+            root = tk.Tk()
+            root.withdraw()
+            app = Vigilant(root)
+            try:
+                base = f'http://127.0.0.1:{app.server.server_port}'
+                for browser in ('brave', 'chrome'):
+                    with urlopen(f'{base}/state?browser={browser}') as response:
+                        self.assertEqual(response.status, 200)
+                self.assertEqual(set(app.server.last_seen), {'brave', 'chrome'})
             finally:
                 app.close()
 

@@ -5,6 +5,7 @@
   "description": "Bloqueia sites escolhidos durante suas sessões de estudo.",
   "permissions": ["declarativeNetRequest", "tabs", "alarms"],
   "host_permissions": ["<all_urls>"],
-  "background": {"service_worker": "background.js"},
+  "background": {"service_worker": "background.js", "scripts": ["background.js"]},
+  "browser_specific_settings": {"gecko": {"id": "the-vigilant@local.invalid", "strict_min_version": "128.0", "data_collection_permissions": {"required": ["none"]}}},
   "web_accessible_resources": [{"resources": ["blocked.html", "blocked.js"], "matches": ["<all_urls>"]}]
 }

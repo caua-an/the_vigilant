@@ -20,6 +20,7 @@ import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tkinter import messagebox, ttk
+from urllib.parse import parse_qs, urlsplit
 
 from core import PRESETS, domain_from_input, load_data, save_data
 
@@ -150,7 +151,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         origin = self.headers.get('Origin', '')
-        if origin.startswith('chrome-extension://'):
+        if origin.startswith(('chrome-extension://', 'moz-extension://')):
             self.send_header('Access-Control-Allow-Origin', origin)
         self.send_header('Cache-Control', 'no-store')
         self.send_header('Content-Length', str(len(body)))
@@ -158,16 +159,22 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path != '/state':
+        url = urlsplit(self.path)
+        if url.path != '/state':
             self.send_error(404)
             return
         with self.server.state_lock:
             domains = list(self.server.domains)
-            self.server.last_seen = time.monotonic()
+            name = parse_qs(url.query).get('browser', [''])[0]
+            origin = self.headers.get('Origin', '')
+            if ((not origin and name in ('brave', 'chrome', 'firefox')) or
+                    (name == 'firefox' and origin.startswith('moz-extension://')) or
+                    (name in ('brave', 'chrome') and origin.startswith('chrome-extension://'))):
+                self.server.last_seen[name] = time.monotonic()
         self.respond({'domains': domains})
 
     def do_POST(self):
-        if self.path != '/attempt' or not self.headers.get('Origin', '').startswith('chrome-extension://'):
+        if self.path != '/attempt' or not self.headers.get('Origin', '').startswith(('chrome-extension://', 'moz-extension://')):
             self.send_error(403)
             return
         self.server.events.put('attempt')
@@ -193,13 +200,13 @@ class Vigilant:
         self.data = load_data()
         self.server = Server(('127.0.0.1', PORT), Handler)
         self.server.domains = []
-        self.server.last_seen = 0
+        self.server.last_seen = {}
         self.server.state_lock = threading.Lock()
         self.server.events = queue.SimpleQueue()
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.build()
         self.refresh()
-        self.root.after(500, self.tick)
+        self.tick_job = self.root.after(500, self.tick)
 
     def build(self):
         self.root.option_add('*Font', ('DejaVu Sans', 10))
@@ -437,7 +444,7 @@ class Vigilant:
         self.site_list = tk.Listbox(self.sites_tab, font=('DejaVu Sans', 11), relief='flat', borderwidth=0)
         self.site_list.pack(fill='both', expand=True)
         tk.Button(self.sites_tab, text='Remover selecionado', command=self.delete_site).pack(anchor='w', pady=10)
-        tk.Label(self.sites_tab, text='Instale a extensão do Brave conforme as instruções no README.', bg=PANEL, fg=BLUE).pack(anchor='w')
+        tk.Label(self.sites_tab, text='Instale a extensão no navegador conforme as instruções no README.', bg=PANEL, fg=BLUE).pack(anchor='w')
 
     def preset_changed(self, site, var):
         data = copy.deepcopy(self.data)
@@ -694,8 +701,11 @@ class Vigilant:
     def tick(self):
         if self.active:
             with self.server.state_lock:
-                connected = time.monotonic() - self.server.last_seen < 35
-            self.connection.config(text='Brave: extensão conectada' if connected else 'Brave: extensão não detectada — confira a instalação no README.')
+                seen = dict(self.server.last_seen)
+            now = time.monotonic()
+            statuses = [f"{label}: {'detectada' if now - seen.get(key, 0) < 65 else 'não detectada'}"
+                        for key, label in (('brave', 'Brave'), ('chrome', 'Chrome/Chromium'), ('firefox', 'Firefox'))]
+            self.connection.config(text='Extensão — ' + '  ·  '.join(statuses))
             event = False
             while not self.server.events.empty():
                 self.server.events.get()
@@ -730,7 +740,7 @@ class Vigilant:
             self.connection.config(text='')
             while not self.server.events.empty():
                 self.server.events.get()
-        self.root.after(500, self.tick)
+        self.tick_job = self.root.after(500, self.tick)
 
     def close(self):
         if self.active and not messagebox.askyesno('Encerrar sessão?', 'Fechar o The Vigilant encerrará a sessão e liberará os bloqueios. Continuar?', parent=self.root):
@@ -738,6 +748,7 @@ class Vigilant:
         self.active = False
         self.publish()
         self.hide_bubble()
+        self.root.after_cancel(self.tick_job)
         self.server.shutdown()
         self.server.server_close()
         self.root.destroy()
