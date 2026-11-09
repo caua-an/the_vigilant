@@ -13,11 +13,36 @@ from unittest.mock import patch
 from urllib.request import Request, urlopen
 
 import core
-from main import Vigilant, alert_sound
+from main import EYES, VISORS, Vigilant, alert_sound, bubble_position
 
 
 @unittest.skipUnless(os.environ.get('DISPLAY'), 'Requer uma sessão gráfica X11')
 class SessionTest(unittest.TestCase):
+    def test_customization_and_reaction(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('main.PORT', 0):
+            root = tk.Tk()
+            root.withdraw()
+            app = Vigilant(root)
+            try:
+                app.set_customization(metal='Cobre', eyes='Azul-escuro', sound=False, adult=True)
+                app.message_entry.insert(0, 'Volte ao foco!')
+                app.message_adult_var.set(True)
+                app.add_message()
+                self.assertEqual(core.load_data()['customization']['messages'], [{'text': 'Volte ao foco!', 'adult': True}])
+                with patch.dict('os.environ', {'XDG_SESSION_TYPE': 'x11'}):
+                    app.toggle_session()
+                app.server.events.put('attempt')
+                with patch('main.play_alert') as play:
+                    app.tick()
+                    play.assert_not_called()
+                self.assertIsNotNone(app.bubble)
+                self.assertEqual(app.bubble.winfo_height(), 96)
+                self.assertTrue(any(app.canvas.itemcget(i, 'fill') == '#ff7771' for i in app.canvas.find_all()))
+                app.end_session()
+                self.assertIsNone(app.bubble)
+            finally:
+                app.close()
+
     def test_drag_and_app_search(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('main.PORT', 0):
             root = tk.Tk()
@@ -105,6 +130,19 @@ class SessionTest(unittest.TestCase):
 
 
 class AlertTest(unittest.TestCase):
+    def test_dark_blue_eye_contrast(self):
+        def luminance(color):
+            values = [int(color[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+            return sum(weight * (v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4)
+                       for v, weight in zip(values, (0.2126, 0.7152, 0.0722)))
+        for visor in VISORS.values():
+            self.assertGreaterEqual((luminance(EYES['Azul-escuro']) + 0.05) / (luminance(visor) + 0.05), 3)
+
+    def test_bubble_stays_on_screen(self):
+        self.assertEqual(bubble_position(0, 0, 270, 78, 1000, 800), (152, 108))
+        self.assertEqual(bubble_position(300, 400, 270, 78, 1000, 800), (452, 358))
+        self.assertEqual(bubble_position(900, 700, 270, 78, 1000, 800), (622, 658))
+
     def test_alert_is_two_seconds(self):
         with wave.open(io.BytesIO(alert_sound()), 'rb') as sound:
             self.assertEqual(sound.getnframes(), sound.getframerate() * 2)

@@ -9,6 +9,7 @@ import json
 import math
 import os
 import queue
+import random
 import shlex
 import shutil
 import subprocess
@@ -26,6 +27,25 @@ BG, PANEL, INK, BLUE = '#101923', '#182533', '#edf3f6', '#a9bdc9'
 RED = '#ff7771'
 PORT = 47653
 HEAD_ROWS = (6, 10, 14, 16, 18, 20, 20, 22, 22, 24, 24, 24, 24, 24, 24, 22, 22, 20, 20, 18, 16, 14, 10, 6)
+METALS = {
+    'Zinco': ('#243b4b', '#7094a1', '#c1d5d7', '#a1bdc3'),
+    'Prata': ('#343b49', '#858f9c', '#ebeff3', '#bdc7d1'),
+    'Cobre': ('#50332e', '#9a5a43', '#f1c09d', '#ce8966'),
+    'Bronze': ('#4a3826', '#8c6b41', '#ebd19c', '#bb9866'),
+}
+VISORS = {'Preto acinzentado': '#20272d', 'Azul-escuro': '#1c3443', 'Verde-escuro': '#18352d'}
+EYES = {'Azul-claro': '#a8e5e5', 'Azul-escuro': '#507fc4', 'Verde-claro': '#a7e6b4', 'Rosa': '#f2b4cf', 'Roxo': '#c5a7ef'}
+DEFAULT_COLORS = {'metal': 'Zinco', 'visor': 'Azul-escuro', 'eyes': 'Azul-claro'}
+NORMAL_MESSAGES = ['Hora de voltar aos estudos!', 'Seu objetivo está esperando.', 'Vamos voltar ao foco!', 'Um passo de cada vez. Continue!']
+ADULT_MESSAGES = ['Volta a estudar, @!#$%!', 'Foco nessa @!#$% de tarefa!', 'Nada de distração, @!#$%!']
+
+
+def bubble_position(x, y, width, height, screen_width, screen_height):
+    right = x + 144 + 8
+    left = right if right + width <= screen_width else x - width - 8
+    left = max(0, min(left, screen_width - width))
+    top = y - height + 36 if y >= height - 36 else y + 108
+    return left, max(0, min(top, screen_height - height))
 
 
 def alert_sound():
@@ -56,8 +76,8 @@ def play_alert():
     threading.Thread(target=play, daemon=True).start()
 
 
-def shape_head(window):
-    """Recorta a janela no contorno pixelado usando a extensão XShape do X11."""
+def shape_window(window, rectangles):
+    """Recorta a janela externa usando a extensão XShape do X11."""
     class Rectangle(ctypes.Structure):
         _fields_ = [('x', ctypes.c_short), ('y', ctypes.c_short),
                     ('width', ctypes.c_ushort), ('height', ctypes.c_ushort)]
@@ -83,13 +103,17 @@ def shape_head(window):
                 return
             if children.value:
                 x11.XFree(children)
-            rows = (Rectangle * len(HEAD_ROWS))(*(Rectangle((24 - width) // 2 * 6, y * 6, width * 6, 6)
-                                                   for y, width in enumerate(HEAD_ROWS)))
+            rows = (Rectangle * len(rectangles))(*(Rectangle(*rect) for rect in rectangles))
             xext.XShapeCombineRectangles(display, parent.value, 0, 0, 0, rows, len(rows), 0, 0)
         finally:
             x11.XCloseDisplay(display)
     except (OSError, AttributeError, TypeError):
-        pass  # Se XShape não estiver disponível, a cabeça permanece em uma janela quadrada.
+        pass  # Sem XShape, a janela mantém seu formato retangular.
+
+
+def shape_head(window):
+    shape_window(window, [((24 - width) // 2 * 6, y * 6, width * 6, 6)
+                          for y, width in enumerate(HEAD_ROWS)])
 
 
 def installed_apps():
@@ -163,6 +187,7 @@ class Vigilant:
         self.root.protocol('WM_DELETE_WINDOW', self.close)
         self.active = False
         self.robot = None
+        self.bubble = None
         self.last_blocked = None
         self.angry_until = 0
         self.data = load_data()
@@ -225,12 +250,110 @@ class Vigilant:
         self.tasks_tab = tk.Frame(self.notebook, bg=PANEL, padx=22, pady=20)
         self.sites_tab = tk.Frame(self.notebook, bg=PANEL, padx=22, pady=20)
         self.apps_tab = tk.Frame(self.notebook, bg=PANEL, padx=22, pady=20)
+        custom_page = tk.Frame(self.notebook, bg=PANEL)
+        custom_scroll = tk.Canvas(custom_page, bg=PANEL, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(custom_page, orient='vertical', command=custom_scroll.yview)
+        scrollbar.pack(side='right', fill='y')
+        custom_scroll.pack(side='left', fill='both', expand=True)
+        custom_scroll.configure(yscrollcommand=scrollbar.set)
+        self.custom_tab = tk.Frame(custom_scroll, bg=PANEL, padx=22, pady=12)
+        custom_window = custom_scroll.create_window(0, 0, anchor='nw', window=self.custom_tab)
+        self.custom_tab.bind('<Configure>', lambda _: custom_scroll.configure(scrollregion=custom_scroll.bbox('all')))
+        custom_scroll.bind('<Configure>', lambda e: custom_scroll.itemconfigure(custom_window, width=e.width))
+        custom_scroll.bind('<Button-4>', lambda _: custom_scroll.yview_scroll(-1, 'units'))
+        custom_scroll.bind('<Button-5>', lambda _: custom_scroll.yview_scroll(1, 'units'))
         self.notebook.add(self.tasks_tab, text='  Tarefas  ')
         self.notebook.add(self.sites_tab, text='  Sites  ')
         self.notebook.add(self.apps_tab, text='  Aplicativos  ')
+        self.notebook.add(custom_page, text='  Customização  ')
         self.make_tasks()
         self.make_sites()
         self.make_apps()
+        self.make_customization()
+
+    def customization(self):
+        return self.data.get('customization', {})
+
+    def set_customization(self, **changes):
+        data = copy.deepcopy(self.data)
+        data.setdefault('customization', {}).update(changes)
+        if self.commit(data):
+            self.draw_robot(False, self.preview)
+            if self.robot:
+                self.draw_robot(time.monotonic() < self.angry_until)
+        else:
+            self.refresh_customization()
+
+    def make_customization(self):
+        header = tk.Frame(self.custom_tab, bg=PANEL)
+        header.pack(fill='x')
+        self.preview = tk.Canvas(header, width=72, height=72, bg=PANEL, highlightthickness=0)
+        self.preview.pack(side='right', padx=(8, 4))
+        tk.Label(header, text='Seu Vigilant', bg=PANEL, fg=INK, font=('DejaVu Sans', 15, 'bold')).pack(anchor='w')
+        tk.Label(header, text='Escolha as cores e como ele conversa com você.', bg=PANEL, fg=BLUE).pack(anchor='w', pady=(2, 8))
+        self.draw_robot(False, self.preview)
+        colors = tk.Frame(self.custom_tab, bg=PANEL)
+        colors.pack(fill='x')
+        self.color_vars = {}
+        for col, (key, label, choices) in enumerate((('metal', 'Metal', METALS), ('visor', 'Visor', VISORS), ('eyes', 'Olhos', EYES))):
+            section = tk.Frame(colors, bg=PANEL)
+            section.grid(row=0, column=col, sticky='ew', padx=(0, 8))
+            colors.columnconfigure(col, weight=1)
+            tk.Label(section, text=label, bg=PANEL, fg=INK).pack(anchor='w')
+            var = tk.StringVar()
+            self.color_vars[key] = var
+            combo = ttk.Combobox(section, textvariable=var, values=list(choices), state='readonly', width=15)
+            combo.pack(fill='x', pady=(4, 4))
+            combo.bind('<<ComboboxSelected>>', lambda _, k=key, v=var: self.set_customization(**{k: v.get()}))
+        options = tk.Frame(self.custom_tab, bg=PANEL)
+        options.pack(fill='x', pady=(2, 4))
+        tk.Button(options, text='Restaurar cores', command=lambda: self.set_customization(**DEFAULT_COLORS)).pack(side='left')
+        self.sound_var = tk.BooleanVar()
+        self.adult_var = tk.BooleanVar()
+        tk.Checkbutton(options, text='Som', bg=PANEL, variable=self.sound_var, command=lambda: self.set_customization(sound=self.sound_var.get())).pack(side='left', padx=(12, 0))
+        tk.Checkbutton(options, text='Modo adulto', bg=PANEL, variable=self.adult_var, command=lambda: self.set_customization(adult=self.adult_var.get())).pack(side='left')
+        tk.Label(self.custom_tab, text='Suas frases', bg=PANEL, fg=INK, font=('DejaVu Sans', 10, 'bold')).pack(anchor='w', pady=(4, 0))
+        row = tk.Frame(self.custom_tab, bg=PANEL)
+        row.pack(fill='x', pady=4)
+        self.message_entry = tk.Entry(row)
+        self.message_entry.pack(side='left', fill='x', expand=True, ipady=3)
+        self.message_entry.bind('<Return>', lambda _: self.add_message())
+        self.message_adult_var = tk.BooleanVar()
+        tk.Checkbutton(row, text='Adulta', bg=PANEL, variable=self.message_adult_var).pack(side='left')
+        tk.Button(row, text='Adicionar', command=self.add_message).pack(side='left')
+        self.message_list = tk.Listbox(self.custom_tab, height=3, relief='flat', borderwidth=0)
+        self.message_list.pack(fill='both', expand=True)
+        tk.Button(self.custom_tab, text='Excluir frase selecionada', command=self.delete_message).pack(anchor='w', pady=(5, 0))
+        self.refresh_customization()
+
+    def refresh_customization(self):
+        settings = self.customization()
+        for key, var in self.color_vars.items():
+            var.set(settings.get(key, DEFAULT_COLORS[key]))
+        self.sound_var.set(settings.get('sound', True))
+        self.adult_var.set(settings.get('adult', False))
+        self.message_list.delete(0, 'end')
+        for item in settings.get('messages', []):
+            self.message_list.insert('end', ('[Adulta] ' if item['adult'] else '[Normal] ') + item['text'])
+
+    def add_message(self):
+        text = self.message_entry.get().strip()
+        if not text:
+            return
+        if len(text) > 90:
+            messagebox.showerror('Frase muito longa', 'Use até 90 caracteres para caber no balão.', parent=self.root)
+            return
+        messages = copy.deepcopy(self.customization().get('messages', []))
+        messages.append({'text': text, 'adult': self.message_adult_var.get()})
+        self.set_customization(messages=messages)
+        self.message_entry.delete(0, 'end')
+
+    def delete_message(self):
+        index = self.selected(self.message_list)
+        if index is not None:
+            messages = copy.deepcopy(self.customization().get('messages', []))
+            messages.pop(index)
+            self.set_customization(messages=messages)
 
     def commit(self, updated):
         try:
@@ -413,6 +536,7 @@ class Vigilant:
         self.app_list.delete(0, 'end')
         for app in self.data['apps']:
             self.app_list.insert('end', f"{app['name']}  ·  {app['id']}")
+        self.refresh_customization()
 
     def toggle_session(self):
         if self.active:
@@ -428,6 +552,7 @@ class Vigilant:
     def end_session(self):
         self.active = False
         self.publish()
+        self.hide_bubble()
         if self.robot:
             self.robot.destroy()
             self.robot = None
@@ -465,6 +590,8 @@ class Vigilant:
         x = max(0, min(window_x + dx, self.root.winfo_screenwidth() - 144))
         y = max(0, min(window_y + dy, self.root.winfo_screenheight() - 144))
         self.robot.geometry(f'+{x}+{y}')
+        if self.bubble:
+            self.position_bubble(x, y)
 
     def robot_release(self, event):
         if self.dragged:
@@ -476,28 +603,32 @@ class Vigilant:
             self.root.deiconify()
             self.root.lift()
 
-    def draw_robot(self, angry):
-        c = self.canvas
+    def draw_robot(self, angry, canvas=None):
+        c = canvas if canvas is not None else self.canvas
         c.delete('all')
         def pixel(x, y, color):
             c.create_rectangle(x * 6, y * 6, x * 6 + 6, y * 6 + 6, fill=color, outline='')
 
+        settings = self.customization()
+        edge_color, shadow, highlight, metal = METALS.get(settings.get('metal'), METALS['Zinco'])
+        visor = VISORS.get(settings.get('visor'), VISORS['Azul-escuro'])
+        eye = EYES.get(settings.get('eyes'), EYES['Azul-claro'])
         # Cabeça redonda em pixels, com contorno e poucos detalhes metálicos.
         for y, width in enumerate(HEAD_ROWS):
             start = (24 - width) // 2
             for x in range(start, start + width):
                 edge = y in (0, 23) or x in (start, start + width - 1)
-                color = '#243b4b' if edge else '#7094a1' if y > 18 or x > 19 else '#c1d5d7' if y < 5 or x < 4 else '#a1bdc3'
+                color = edge_color if edge else shadow if y > 18 or x > 19 else highlight if y < 5 or x < 4 else metal
                 pixel(x, y, color)
         for x, y in ((7, 3), (8, 3), (9, 3), (6, 4), (18, 19), (17, 20)):
-            pixel(x, y, '#deebea' if y < 10 else '#5b7f8c')
+            pixel(x, y, highlight if y < 10 else shadow)
         # Um visor amplo, integrado à carcaça, forma o rosto do robô.
         for y in range(6, 18):
             for x in range(4, 20):
                 if (x in (4, 19) and y in (6, 17)):
                     continue
-                pixel(x, y, '#304c5b' if y in (6, 17) or x in (4, 19) else '#1c3443')
-        color = RED if angry else '#a8e5e5'
+                pixel(x, y, edge_color if y in (6, 17) or x in (4, 19) else visor)
+        color = RED if angry else eye
         for x in (8, 14):
             for y in (10, 11, 12):
                 pixel(x, y, color)
@@ -512,7 +643,53 @@ class Vigilant:
             for x, y in ((10, 14), (11, 15), (12, 15), (13, 14)):
                 pixel(x, y, color)
         for x in (10, 11, 12, 13):
-            pixel(x, 20, '#648896')
+            pixel(x, 20, shadow)
+        if canvas is not None:
+            c.scale('all', 0, 0, 0.5, 0.5)
+
+    def show_bubble(self):
+        settings = self.customization()
+        adult = settings.get('adult', False)
+        messages = NORMAL_MESSAGES + (ADULT_MESSAGES if adult else [])
+        messages += [item['text'] for item in settings.get('messages', []) if adult or not item['adult']]
+        self.bubble_text = random.choice(messages)
+        self.hide_bubble()
+        self.bubble = tk.Toplevel(self.root)
+        self.bubble.overrideredirect(True)
+        self.bubble.attributes('-topmost', True)
+        self.bubble_canvas = tk.Canvas(self.bubble, width=270, height=96, bg='#263b49', highlightthickness=0)
+        self.bubble_canvas.pack()
+        self.robot.update_idletasks()
+        self.position_bubble(self.robot.winfo_x(), self.robot.winfo_y())
+
+    def position_bubble(self, x, y):
+        bx, by = bubble_position(x, y, 270, 96, self.root.winfo_screenwidth(), self.root.winfo_screenheight())
+        self.bubble.geometry(f'270x96+{bx}+{by}')
+        c = self.bubble_canvas
+        c.delete('all')
+        below = by > y
+        tail = max(32, min(238, x + 72 - bx))
+        body_y = 16 if below else 0
+        # Faixas em degraus formam o balão e sua ponta, sem fundo retangular.
+        body = [(16, body_y, 238, 4), (8, body_y + 4, 254, 4),
+                (4, body_y + 8, 262, 56), (8, body_y + 64, 254, 4),
+                (16, body_y + 68, 238, 4)]
+        if below:
+            tip = [(tail - 2, 0, 4, 4), (tail - 6, 4, 12, 4), (tail - 10, 8, 20, 4), (tail - 14, 12, 28, 4)]
+        else:
+            tip = [(tail - 14, 72, 28, 4), (tail - 10, 76, 20, 4), (tail - 6, 80, 12, 4), (tail - 2, 84, 4, 4)]
+        for rx, ry, width, height in body + tip:
+            c.create_rectangle(rx, ry, rx + width, ry + height, fill='#263b49', outline='')
+        c.create_rectangle(12, body_y + 8, 258, body_y + 64, fill='#f5f7f2', outline='')
+        c.create_rectangle(8, body_y + 16, 262, body_y + 56, fill='#f5f7f2', outline='')
+        c.create_text(135, body_y + 36, text=self.bubble_text, width=234, fill='#172d3b', font=('DejaVu Sans Mono', 10, 'bold'), justify='center')
+        self.bubble.update_idletasks()
+        shape_window(self.bubble, body + tip)
+
+    def hide_bubble(self):
+        if self.bubble:
+            self.bubble.destroy()
+            self.bubble = None
 
     def tick(self):
         if self.active:
@@ -539,14 +716,16 @@ class Vigilant:
                 except (OSError, subprocess.SubprocessError):
                     pass
             if event:
-                if time.monotonic() >= self.angry_until:
+                if time.monotonic() >= self.angry_until and self.customization().get('sound', True):
                     play_alert()
                 self.angry_until = time.monotonic() + 2
+                if self.robot:
+                    self.show_bubble()
             if self.robot:
                 angry = time.monotonic() < self.angry_until
                 self.draw_robot(angry)
-                if angry and int(time.monotonic() * 6) % 2:
-                    self.canvas.move('all', 3, 0)
+                if not angry:
+                    self.hide_bubble()
         else:
             self.connection.config(text='')
             while not self.server.events.empty():
@@ -558,6 +737,7 @@ class Vigilant:
             return
         self.active = False
         self.publish()
+        self.hide_bubble()
         self.server.shutdown()
         self.server.server_close()
         self.root.destroy()
