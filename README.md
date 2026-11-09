@@ -11,7 +11,7 @@ cd /home/caua/Documentos/code_projects/the-vigilant
 python3 main.py
 ```
 
-Clique no robô para voltar à janela principal. Em **Tarefas**, selecione uma tarefa e use **Concluir / reabrir**. Excluir a última tarefa não termina a sessão. Em **Sites** e **Aplicativos**, escolha o que deseja deixar em pausa; tudo começa desmarcado. As alterações são salvas localmente em `~/.local/share/the-vigilant/data.json` (ou em `$XDG_DATA_HOME/the-vigilant/data.json`). Não há conta, câmera, microfone nem histórico de navegação.
+Clique no robô para voltar à janela principal ou arraste-o para mover; a posição é salva para as próximas sessões. Em **Tarefas**, selecione uma tarefa e use **Concluir / reabrir**. Excluir a última tarefa não termina a sessão. Em **Sites** e **Aplicativos**, escolha o que deseja deixar em pausa; tudo começa desmarcado. As alterações são salvas localmente em `~/.local/share/the-vigilant/data.json` (ou em `$XDG_DATA_HOME/the-vigilant/data.json`). Não há conta, câmera, microfone nem histórico de navegação.
 
 ## Instalar a extensão do Brave
 
@@ -26,7 +26,7 @@ Após encerrar a sessão, a atualização pode levar alguns segundos. Se o aplic
 
 ## Aplicativos e limitações
 
-O monitoramento verifica a janela ativa a cada meio segundo e a minimiza quando a classe da janela ou o nome do processo corresponde ao identificador escolhido. Isso não fecha o programa nem impede seu lançamento. Alguns aplicativos empacotados ou iniciadores não expõem uma classe que corresponda ao nome da lista: nesses casos, adicione manualmente a classe ou o nome do processo. Para descobrir a classe, execute `xprop WM_CLASS` em um terminal e clique na janela desejada. Em Wayland, a identificação e minimização de janelas não são garantidas.
+O monitoramento verifica a janela ativa a cada meio segundo e a minimiza quando a classe da janela ou o nome do processo corresponde ao identificador escolhido. Isso não fecha o programa nem impede seu lançamento. Busque aplicativos pelo nome em **Escolher instalado**. Alguns aplicativos empacotados ou iniciadores não expõem uma classe que corresponda ao identificador encontrado e podem não ser detectados. Em Wayland, a identificação e minimização de janelas não são garantidas.
 
 ## Verificação
 

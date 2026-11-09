@@ -18,7 +18,7 @@ import tkinter as tk
 import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import messagebox, ttk
 
 from core import PRESETS, domain_from_input, load_data, save_data
 
@@ -68,6 +68,8 @@ def shape_head(window):
         x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
         x11.XOpenDisplay.restype = ctypes.c_void_p
         x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+        x11.XQueryTree.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong), ctypes.POINTER(ctypes.c_ulong), ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_uint)]
+        x11.XFree.argtypes = [ctypes.c_void_p]
         xext.XShapeCombineRectangles.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int,
                                                   ctypes.c_int, ctypes.c_int, ctypes.POINTER(Rectangle),
                                                   ctypes.c_int, ctypes.c_int, ctypes.c_int]
@@ -75,9 +77,15 @@ def shape_head(window):
         if not display:
             return
         try:
+            root, parent = ctypes.c_ulong(), ctypes.c_ulong()
+            children, count = ctypes.c_void_p(), ctypes.c_uint()
+            if not x11.XQueryTree(display, window.winfo_id(), ctypes.byref(root), ctypes.byref(parent), ctypes.byref(children), ctypes.byref(count)):
+                return
+            if children.value:
+                x11.XFree(children)
             rows = (Rectangle * len(HEAD_ROWS))(*(Rectangle((24 - width) // 2 * 6, y * 6, width * 6, 6)
                                                    for y, width in enumerate(HEAD_ROWS)))
-            xext.XShapeCombineRectangles(display, window.winfo_id(), 0, 0, 0, rows, len(rows), 0, 0)
+            xext.XShapeCombineRectangles(display, parent.value, 0, 0, 0, rows, len(rows), 0, 0)
         finally:
             x11.XCloseDisplay(display)
     except (OSError, AttributeError, TypeError):
@@ -342,36 +350,41 @@ class Vigilant:
         row = tk.Frame(self.apps_tab, bg=PANEL)
         row.pack(fill='x', pady=(0, 12))
         tk.Button(row, text='Escolher instalado', command=self.choose_app).pack(side='left')
-        tk.Button(row, text='Adicionar nome manualmente', command=self.add_manual_app).pack(side='left', padx=8)
         self.app_list = tk.Listbox(self.apps_tab, font=('DejaVu Sans', 11), relief='flat', borderwidth=0)
         self.app_list.pack(fill='both', expand=True)
         tk.Button(self.apps_tab, text='Remover selecionado', command=self.delete_app).pack(anchor='w', pady=10)
-        tk.Label(self.apps_tab, text='Alguns aplicativos exigem informar manualmente o nome do processo ou da classe da janela.', bg=PANEL, fg=BLUE, wraplength=640, justify='left').pack(anchor='w')
+        tk.Label(self.apps_tab, text='Alguns aplicativos podem não ser identificados corretamente ao ganhar foco.', bg=PANEL, fg=BLUE, wraplength=640, justify='left').pack(anchor='w')
 
     def choose_app(self):
         window = tk.Toplevel(self.root)
         window.configure(bg=PANEL)
         window.title('Escolher aplicativo')
         window.geometry('440x500')
-        tk.Label(window, text='Selecione um aplicativo instalado:', bg=PANEL, fg=INK).pack(anchor='w', padx=12, pady=10)
+        tk.Label(window, text='Buscar aplicativo instalado:', bg=PANEL, fg=INK).pack(anchor='w', padx=12, pady=(12, 4))
+        search = tk.StringVar(master=window)
+        search_entry = tk.Entry(window, textvariable=search)
+        search_entry.pack(fill='x', padx=12, pady=(0, 10), ipady=4)
         listing = tk.Listbox(window)
         listing.pack(fill='both', expand=True, padx=12)
         entries = installed_apps()
-        for name, identifier in entries:
-            listing.insert('end', f'{name}  ·  {identifier}')
+        filtered = []
+        def update_list(*_):
+            query = search.get().strip().casefold()
+            filtered[:] = [(name, identifier) for name, identifier in entries if query in name.casefold()]
+            listing.delete(0, 'end')
+            for name, identifier in filtered:
+                listing.insert('end', f'{name}  ·  {identifier}')
+        search.trace_add('write', update_list)
+        update_list()
+        search_entry.focus_set()
         def choose():
             index = self.selected(listing)
             if index is not None:
-                name, identifier = entries[index]
+                name, identifier = filtered[index]
                 self.add_app(name, identifier)
                 window.destroy()
         tk.Button(window, text='Adicionar', command=choose).pack(pady=12)
         listing.bind('<Double-Button-1>', lambda _: choose())
-
-    def add_manual_app(self):
-        value = simpledialog.askstring('Adicionar aplicativo', 'Nome exato do processo ou classe da janela:', parent=self.root)
-        if value and value.strip():
-            self.add_app(value.strip(), value.strip())
 
     def add_app(self, name, identifier):
         data = copy.deepcopy(self.data)
@@ -424,13 +437,44 @@ class Vigilant:
         self.robot = tk.Toplevel(self.root)
         self.robot.overrideredirect(True)
         self.robot.attributes('-topmost', True)
-        self.robot.geometry(f'144x144+{self.root.winfo_screenwidth()-160}+{self.root.winfo_screenheight()-195}')
+        position = self.data.get('robot_position')
+        if not (isinstance(position, list) and len(position) == 2 and all(type(v) is int for v in position)):
+            position = [self.root.winfo_screenwidth() - 160, self.root.winfo_screenheight() - 195]
+        x = max(0, min(position[0], self.root.winfo_screenwidth() - 144))
+        y = max(0, min(position[1], self.root.winfo_screenheight() - 144))
+        self.robot.geometry(f'144x144+{x}+{y}')
         self.canvas = tk.Canvas(self.robot, width=144, height=144, bg=BG, highlightthickness=0)
         self.canvas.pack()
-        self.canvas.bind('<Button-1>', lambda _: (self.root.deiconify(), self.root.lift()))
+        self.canvas.bind('<ButtonPress-1>', self.robot_press)
+        self.canvas.bind('<B1-Motion>', self.robot_move)
+        self.canvas.bind('<ButtonRelease-1>', self.robot_release)
         self.draw_robot(False)
         self.robot.update_idletasks()
         shape_head(self.robot)
+
+    def robot_press(self, event):
+        self.drag_start = (event.x_root, event.y_root, self.robot.winfo_x(), self.robot.winfo_y())
+        self.dragged = False
+
+    def robot_move(self, event):
+        start_x, start_y, window_x, window_y = self.drag_start
+        dx, dy = event.x_root - start_x, event.y_root - start_y
+        if abs(dx) + abs(dy) < 5 and not self.dragged:
+            return
+        self.dragged = True
+        x = max(0, min(window_x + dx, self.root.winfo_screenwidth() - 144))
+        y = max(0, min(window_y + dy, self.root.winfo_screenheight() - 144))
+        self.robot.geometry(f'+{x}+{y}')
+
+    def robot_release(self, event):
+        if self.dragged:
+            self.robot.update_idletasks()
+            data = copy.deepcopy(self.data)
+            data['robot_position'] = [self.robot.winfo_x(), self.robot.winfo_y()]
+            self.commit(data)
+        else:
+            self.root.deiconify()
+            self.root.lift()
 
     def draw_robot(self, angry):
         c = self.canvas
