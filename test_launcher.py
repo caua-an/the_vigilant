@@ -13,6 +13,7 @@ class LauncherTest(unittest.TestCase):
             self.assertEqual(install_launcher.main(), 0)
             path = Path(temp) / 'applications/the-vigilant.desktop'
             self.assertIn('main.py', path.read_text())
+            self.assertIn('icon.svg', path.read_text())
             self.assertEqual(install_launcher.main(), 0)
             path.write_text('outro atalho')
             self.assertEqual(install_launcher.main(), 1)

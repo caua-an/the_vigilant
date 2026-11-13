@@ -18,6 +18,47 @@ from main import EYES, VISORS, Vigilant, alert_sound, bubble_position
 
 @unittest.skipUnless(os.environ.get('DISPLAY'), 'Requer uma sessão gráfica X11')
 class SessionTest(unittest.TestCase):
+    def test_exception_control_visible_and_clickable(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('main.PORT', 0):
+            root = tk.Tk()
+            app = Vigilant(root)
+            try:
+                app.notebook.select(app.sites_tab)
+                for size in ('820x720', '680x540'):
+                    root.geometry(size)
+                    root.update()
+                    self.assertTrue(app.exception_entry.winfo_ismapped(), f'Campo oculto em {size}')
+                app.exception_entry.insert(0, 'https://music.youtube.com/')
+                button = next(w for w in app.exception_entry.master.winfo_children() if isinstance(w, tk.Button))
+                self.assertTrue(button.winfo_ismapped())
+                button.invoke()
+                self.assertEqual(app.data.get('site_exceptions'), ['music.youtube.com'])
+                self.assertNotIn('music.youtube.com', app.data['sites'])
+            finally:
+                app.close()
+
+    def test_site_exception_persisted_and_published(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('main.PORT', 0):
+            root = tk.Tk()
+            root.withdraw()
+            app = Vigilant(root)
+            try:
+                app.commit({'tasks': [], 'sites': ['youtube.com'], 'apps': []})
+                app.exception_entry.insert(0, 'https://music.youtube.com/playlist')
+                app.add_exception()
+                self.assertEqual(core.load_data()['site_exceptions'], ['music.youtube.com'])
+                with patch.dict('os.environ', {'XDG_SESSION_TYPE': 'x11'}):
+                    app.toggle_session()
+                with urlopen(f'http://127.0.0.1:{app.server.server_port}/state') as response:
+                    self.assertEqual(json.load(response), {'domains': ['youtube.com'], 'exceptions': ['music.youtube.com']})
+                app.exception_list.selection_set(0)
+                app.delete_exception()
+                with urlopen(f'http://127.0.0.1:{app.server.server_port}/state') as response:
+                    self.assertEqual(json.load(response)['exceptions'], [])
+                app.end_session()
+            finally:
+                app.close()
+
     def test_customization_and_reaction(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('main.PORT', 0):
             root = tk.Tk()

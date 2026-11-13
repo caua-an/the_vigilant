@@ -20,6 +20,7 @@ def main():
     contents = ('[Desktop Entry]\nType=Application\nName=The Vigilant\n'
                 'Comment=Organize seus estudos e mantenha o foco\n'
                 f'Exec={desktop_quote(sys.executable)} {desktop_quote(project / "main.py")}\n'
+                f'Icon={project / "icon.svg"}\n'
                 f'Path={project}\nTerminal=false\nCategories=Education;Utility;\n')
     if destination.exists():
         if destination.read_text(encoding='utf-8') == contents:

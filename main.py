@@ -165,13 +165,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         with self.server.state_lock:
             domains = list(self.server.domains)
+            exceptions = list(self.server.exceptions)
             name = parse_qs(url.query).get('browser', [''])[0]
             origin = self.headers.get('Origin', '')
             if ((not origin and name in ('brave', 'chrome', 'firefox')) or
                     (name == 'firefox' and origin.startswith('moz-extension://')) or
                     (name in ('brave', 'chrome') and origin.startswith('chrome-extension://'))):
                 self.server.last_seen[name] = time.monotonic()
-        self.respond({'domains': domains})
+        self.respond({'domains': domains, 'exceptions': exceptions})
 
     def do_POST(self):
         if self.path != '/attempt' or not self.headers.get('Origin', '').startswith(('chrome-extension://', 'moz-extension://')):
@@ -200,6 +201,7 @@ class Vigilant:
         self.data = load_data()
         self.server = Server(('127.0.0.1', PORT), Handler)
         self.server.domains = []
+        self.server.exceptions = []
         self.server.last_seen = {}
         self.server.state_lock = threading.Lock()
         self.server.events = queue.SimpleQueue()
@@ -255,7 +257,18 @@ class Vigilant:
         self.notebook = ttk.Notebook(content)
         self.notebook.pack(fill='both', expand=True)
         self.tasks_tab = tk.Frame(self.notebook, bg=PANEL, padx=22, pady=20)
-        self.sites_tab = tk.Frame(self.notebook, bg=PANEL, padx=22, pady=20)
+        self.sites_tab = tk.Frame(self.notebook, bg=PANEL)
+        sites_scroll = tk.Canvas(self.sites_tab, bg=PANEL, highlightthickness=0)
+        sites_bar = ttk.Scrollbar(self.sites_tab, orient='vertical', command=sites_scroll.yview)
+        sites_bar.pack(side='right', fill='y')
+        sites_scroll.pack(side='left', fill='both', expand=True)
+        sites_scroll.configure(yscrollcommand=sites_bar.set)
+        self.sites_content = tk.Frame(sites_scroll, bg=PANEL, padx=22, pady=16)
+        sites_window = sites_scroll.create_window(0, 0, anchor='nw', window=self.sites_content)
+        self.sites_content.bind('<Configure>', lambda _: sites_scroll.configure(scrollregion=sites_scroll.bbox('all')))
+        sites_scroll.bind('<Configure>', lambda e: sites_scroll.itemconfigure(sites_window, width=e.width))
+        sites_scroll.bind('<Button-4>', lambda _: sites_scroll.yview_scroll(-1, 'units'))
+        sites_scroll.bind('<Button-5>', lambda _: sites_scroll.yview_scroll(1, 'units'))
         self.apps_tab = tk.Frame(self.notebook, bg=PANEL, padx=22, pady=20)
         custom_page = tk.Frame(self.notebook, bg=PANEL)
         custom_scroll = tk.Canvas(custom_page, bg=PANEL, highlightthickness=0)
@@ -376,6 +389,7 @@ class Vigilant:
     def publish(self):
         with self.server.state_lock:
             self.server.domains = list(self.data['sites']) if self.active else []
+            self.server.exceptions = list(self.data.get('site_exceptions', [])) if self.active else []
 
     def make_tasks(self):
         tk.Label(self.tasks_tab, text='O que você vai estudar?', bg=PANEL, fg=INK, font=('DejaVu Sans', 15, 'bold')).pack(anchor='w')
@@ -426,25 +440,42 @@ class Vigilant:
             self.commit(data)
 
     def make_sites(self):
-        tk.Label(self.sites_tab, text='Sites para deixar em pausa', bg=PANEL, fg=INK, font=('DejaVu Sans', 13, 'bold')).pack(anchor='w')
-        tk.Label(self.sites_tab, text='Selecione sugestões ou adicione um link. O domínio inteiro será bloqueado.', bg=PANEL, fg=BLUE, wraplength=650, justify='left').pack(anchor='w', pady=(4, 10))
+        tab = self.sites_content
+        tk.Label(tab, text='Sites para deixar em pausa', bg=PANEL, fg=INK, font=('DejaVu Sans', 13, 'bold')).pack(anchor='w')
+        tk.Label(tab, text='Selecione sugestões ou adicione um link. O domínio inteiro será bloqueado.', bg=PANEL, fg=BLUE, wraplength=650, justify='left').pack(anchor='w', pady=(4, 10))
         self.preset_vars = {}
-        presets = tk.Frame(self.sites_tab, bg=PANEL)
+        presets = tk.Frame(tab, bg=PANEL)
         presets.pack(fill='x')
         for site in PRESETS:
             var = tk.BooleanVar()
             self.preset_vars[site] = var
             tk.Checkbutton(presets, text=site, variable=var, bg=PANEL, command=lambda s=site, v=var: self.preset_changed(s, v)).pack(side='left', padx=(0, 10))
-        row = tk.Frame(self.sites_tab, bg=PANEL, pady=12)
+        row = tk.Frame(tab, bg=PANEL, pady=12)
         row.pack(fill='x')
         self.site_entry = tk.Entry(row, font=('DejaVu Sans', 11))
         self.site_entry.pack(side='left', fill='x', expand=True, ipady=5)
         self.site_entry.bind('<Return>', lambda _: self.add_site())
         tk.Button(row, text='Adicionar site', command=self.add_site).pack(side='left', padx=(8, 0))
-        self.site_list = tk.Listbox(self.sites_tab, font=('DejaVu Sans', 11), relief='flat', borderwidth=0)
+        lists = tk.Frame(tab, bg=PANEL)
+        lists.pack(fill='both', expand=True)
+        blocked = tk.Frame(lists, bg=PANEL)
+        blocked.pack(side='left', fill='both', expand=True, padx=(0, 8))
+        allowed = tk.Frame(lists, bg=PANEL)
+        allowed.pack(side='left', fill='both', expand=True)
+        tk.Label(blocked, text='Bloqueados', bg=PANEL, fg=INK).pack(anchor='w')
+        self.site_list = tk.Listbox(blocked, font=('DejaVu Sans', 10), relief='flat', borderwidth=0, exportselection=False)
         self.site_list.pack(fill='both', expand=True)
-        tk.Button(self.sites_tab, text='Remover selecionado', command=self.delete_site).pack(anchor='w', pady=10)
-        tk.Label(self.sites_tab, text='Instale a extensão no navegador conforme as instruções no README.', bg=PANEL, fg=BLUE).pack(anchor='w')
+        tk.Button(blocked, text='Remover bloqueio', command=self.delete_site).pack(side='bottom', anchor='w', pady=(5, 0), before=self.site_list)
+        tk.Label(allowed, text='Exceções permitidas', bg=PANEL, fg=INK).pack(anchor='w')
+        self.exception_list = tk.Listbox(allowed, font=('DejaVu Sans', 10), relief='flat', borderwidth=0, exportselection=False)
+        self.exception_list.pack(fill='both', expand=True)
+        tk.Button(allowed, text='Remover exceção', command=self.delete_exception).pack(side='bottom', anchor='w', pady=(5, 0), before=self.exception_list)
+        row = tk.Frame(tab, bg=PANEL, pady=4)
+        row.pack(fill='x', before=lists)
+        self.exception_entry = tk.Entry(row, font=('DejaVu Sans', 10))
+        self.exception_entry.pack(side='left', fill='x', expand=True, ipady=4)
+        self.exception_entry.bind('<Return>', lambda _: self.add_exception())
+        tk.Button(row, text='Adicionar exceção', command=self.add_exception).pack(side='left', padx=(8, 0))
 
     def preset_changed(self, site, var):
         data = copy.deepcopy(self.data)
@@ -472,6 +503,26 @@ class Vigilant:
         if index is not None:
             data = copy.deepcopy(self.data)
             data['sites'].pop(index)
+            self.commit(data)
+
+    def add_exception(self):
+        try:
+            site = domain_from_input(self.exception_entry.get())
+        except ValueError as exc:
+            messagebox.showerror('Exceção inválida', str(exc), parent=self.root)
+            return
+        data = copy.deepcopy(self.data)
+        exceptions = data.setdefault('site_exceptions', [])
+        if site not in exceptions:
+            exceptions.append(site)
+        if self.commit(data):
+            self.exception_entry.delete(0, 'end')
+
+    def delete_exception(self):
+        index = self.selected(self.exception_list)
+        if index is not None:
+            data = copy.deepcopy(self.data)
+            data['site_exceptions'].pop(index)
             self.commit(data)
 
     def make_apps(self):
@@ -538,6 +589,9 @@ class Vigilant:
         self.site_list.delete(0, 'end')
         for site in self.data['sites']:
             self.site_list.insert('end', site)
+        self.exception_list.delete(0, 'end')
+        for site in self.data.get('site_exceptions', []):
+            self.exception_list.insert('end', site)
         for site, var in self.preset_vars.items():
             var.set(site in self.data['sites'])
         self.app_list.delete(0, 'end')

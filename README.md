@@ -31,6 +31,8 @@ As extensões de navegadores abertos simultaneamente recebem a mesma configuraç
 
 A extensão consulta o aplicativo no endereço local `127.0.0.1:47653` e usa regras de sessão do navegador. As regras abrangem o domínio informado e seus subdomínios. O prefixo `www.` é removido automaticamente; para outros subdomínios, informe o domínio principal se desejar bloqueá-lo por inteiro. Abas já abertas são substituídas por uma página de aviso e não são restauradas automaticamente.
 
+Para manter um subdomínio acessível, adicione-o em **Sites → Exceções permitidas**. Por exemplo, bloqueie `youtube.com` e adicione `music.youtube.com` como exceção para permitir o YouTube Music. A exceção também libera os subdomínios dela e prevalece sobre todos os bloqueios. Após atualizar o projeto, recarregue a extensão em cada navegador e reinicie o aplicativo.
+
 Após encerrar a sessão, a atualização pode levar algum tempo. Se o aplicativo for encerrado inesperadamente, a extensão tenta remover as regras quando detectar a desconexão. O navegador pode suspender a extensão em segundo plano; nesse caso a recuperação depende de ela voltar a executar. Uma extensão desativada, outro navegador ou um perfil sem a extensão não estarão protegidos. O aplicativo é uma ajuda ao foco, não uma barreira inviolável.
 
 ## Windows no futuro
