@@ -49,3 +49,13 @@ O monitoramento verifica a janela ativa a cada meio segundo e a minimiza quando 
 python3 -m unittest -v
 node test_extension.cjs  # opcional: simula os três navegadores; requer Node.js
 ```
+
+## Organização do código
+
+- `main.py`: inicialização do aplicativo e tratamento de erros de inicialização.
+- `core.py`: validação de domínios e armazenamento local.
+- `vigilant/app.py`: janela principal, estado e ciclo de vida das sessões.
+- `vigilant/tasks.py`, `sites.py`, `applications.py` e `customization.py`: controles e ações de cada página. Essas classes são componentes da janela principal e usam seu estado compartilhado.
+- `vigilant/robot.py`, `sound.py` e `theme.py`: robô flutuante, alerta sonoro e cores da interface.
+- `vigilant/browser_server.py`: comunicação local com as extensões; `vigilant/linux.py`: identificação e monitoramento de aplicativos no Linux.
+- `extension/`: extensão instalada nos navegadores; `install_launcher.py`: atalho do menu Linux.

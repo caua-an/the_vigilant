@@ -13,13 +13,39 @@ from unittest.mock import patch
 from urllib.request import Request, urlopen
 
 import core
-from main import EYES, VISORS, Vigilant, alert_sound, bubble_position
+from vigilant.app import Vigilant
+from vigilant.robot import EYES, VISORS, bubble_position, shape_head
+from vigilant.sound import alert_sound
 
 
 @unittest.skipUnless(os.environ.get('DISPLAY'), 'Requer uma sessão gráfica X11')
 class SessionTest(unittest.TestCase):
+    def test_sidebar_and_responsive_sites(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('vigilant.app.PORT', 0):
+            root = tk.Tk()
+            app = Vigilant(root)
+            try:
+                app.nav_buttons[1].invoke()
+                root.geometry('1100x720')
+                root.update()
+                self.assertEqual(app.notebook.select(), str(app.sites_tab))
+                self.assertEqual(app.allowed_card.grid_info()['row'], 0)
+                self.assertTrue(app.empty_sites.winfo_ismapped())
+                self.assertTrue(app.empty_exceptions.winfo_ismapped())
+                root.geometry('680x540')
+                root.update()
+                self.assertEqual(app.allowed_card.grid_info()['row'], 1)
+                app.exception_entry.focus_force()
+                root.update()
+                canvas = app.sites_scroll
+                top = app.exception_entry.winfo_rooty() - canvas.winfo_rooty()
+                self.assertGreaterEqual(top, 0)
+                self.assertLessEqual(top + app.exception_entry.winfo_height(), canvas.winfo_height())
+            finally:
+                app.close()
+
     def test_exception_control_visible_and_clickable(self):
-        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('main.PORT', 0):
+        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('vigilant.app.PORT', 0):
             root = tk.Tk()
             app = Vigilant(root)
             try:
@@ -38,7 +64,7 @@ class SessionTest(unittest.TestCase):
                 app.close()
 
     def test_site_exception_persisted_and_published(self):
-        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('main.PORT', 0):
+        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('vigilant.app.PORT', 0):
             root = tk.Tk()
             root.withdraw()
             app = Vigilant(root)
@@ -60,7 +86,7 @@ class SessionTest(unittest.TestCase):
                 app.close()
 
     def test_customization_and_reaction(self):
-        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('main.PORT', 0):
+        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('vigilant.app.PORT', 0):
             root = tk.Tk()
             root.withdraw()
             app = Vigilant(root)
@@ -74,7 +100,7 @@ class SessionTest(unittest.TestCase):
                     app.toggle_session()
                 app.server.events.put('attempt')
                 root.after_cancel(app.tick_job)
-                with patch('main.play_alert') as play:
+                with patch('vigilant.app.play_alert') as play:
                     app.tick()
                     play.assert_not_called()
                 self.assertIsNotNone(app.bubble)
@@ -86,7 +112,7 @@ class SessionTest(unittest.TestCase):
                 app.close()
 
     def test_drag_and_app_search(self):
-        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('main.PORT', 0):
+        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('vigilant.app.PORT', 0):
             root = tk.Tk()
             root.withdraw()
             app = Vigilant(root)
@@ -98,7 +124,7 @@ class SessionTest(unittest.TestCase):
                 app.robot_move(SimpleNamespace(x_root=x - 10, y_root=y - 10))
                 app.robot_release(SimpleNamespace())
                 self.assertEqual(core.load_data()['robot_position'], [max(0, x - 20), max(0, y - 20)])
-                with patch('main.installed_apps', return_value=[('Alpha', 'alpha'), ('Brave', 'brave')]):
+                with patch('vigilant.applications.installed_apps', return_value=[('Alpha', 'alpha'), ('Brave', 'brave')]):
                     app.choose_app()
                 dialog = [w for w in root.winfo_children() if isinstance(w, tk.Toplevel) and w is not app.robot][0]
                 entry = next(w for w in dialog.winfo_children() if isinstance(w, tk.Entry))
@@ -114,7 +140,6 @@ class SessionTest(unittest.TestCase):
                 app.close()
 
     def test_robot_outer_window_is_shaped(self):
-        from main import shape_head
         root = tk.Tk()
         root.withdraw()
         robot = tk.Toplevel(root)
@@ -149,7 +174,7 @@ class SessionTest(unittest.TestCase):
             root.destroy()
 
     def test_session_and_last_task(self):
-        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('main.PORT', 0):
+        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('vigilant.app.PORT', 0):
             root = tk.Tk()
             root.withdraw()
             app = Vigilant(root)
@@ -162,7 +187,7 @@ class SessionTest(unittest.TestCase):
                     self.assertEqual(json.load(response)['domains'], ['youtube.com'])
                     self.assertEqual(response.headers['Access-Control-Allow-Origin'], 'chrome-extension://test')
                 app.task_list.selection_set(0)
-                with patch('main.messagebox.showinfo'):
+                with patch('vigilant.tasks.messagebox.showinfo'):
                     app.toggle_task()
                 self.assertFalse(app.active)
                 with urlopen(request) as response:
@@ -171,7 +196,7 @@ class SessionTest(unittest.TestCase):
                 app.close()
 
     def test_multiple_browser_connections_and_firefox_attempt(self):
-        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('main.PORT', 0):
+        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('vigilant.app.PORT', 0):
             root = tk.Tk()
             root.withdraw()
             app = Vigilant(root)
@@ -188,7 +213,7 @@ class SessionTest(unittest.TestCase):
                 app.close()
 
     def test_browser_heartbeat_without_origin(self):
-        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('main.PORT', 0):
+        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('vigilant.app.PORT', 0):
             root = tk.Tk()
             root.withdraw()
             app = Vigilant(root)
