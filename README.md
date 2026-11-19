@@ -15,6 +15,8 @@ Para criar um atalho no menu de aplicativos apenas para o usuário atual, execut
 
 Clique no robô para voltar à janela principal ou arraste-o para mover; a posição é salva para as próximas sessões. Em **Tarefas**, selecione uma tarefa e use **Concluir / reabrir**. Excluir a última tarefa não termina a sessão. Em **Sites** e **Aplicativos**, escolha o que deseja deixar em pausa; tudo começa desmarcado. As alterações são salvas localmente em `~/.local/share/the-vigilant/data.json` (ou em `$XDG_DATA_HOME/the-vigilant/data.json`). Não há conta, câmera, microfone nem histórico de navegação.
 
+O tempo decorrido aparece no topo da janela. Ele para ao encerrar a sessão, permanece visível até a próxima e não é salvo como histórico.
+
 Em **Customização**, escolha as cores do metal, visor e olhos; restaure as cores originais sem apagar suas frases. O som pode ser desligado e o modo adulto é opcional. Adicione frases normais ou adultas de até 90 caracteres; frases adultas só são sorteadas quando o modo adulto está ativo. Quando ocorrer um bloqueio, o robô fica com olhos vermelhos e mostra uma frase por cerca de dois segundos, sem se mover.
 
 ## Instalar a extensão do navegador

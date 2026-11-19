@@ -27,6 +27,7 @@ class Vigilant(TasksUI, SitesUI, ApplicationsUI, CustomizationUI, RobotUI):
         self.root.configure(bg=BG)
         self.root.protocol('WM_DELETE_WINDOW', self.close)
         self.active = False
+        self.session_started = None
         self.robot = None
         self.bubble = None
         self.last_blocked = None
@@ -94,6 +95,8 @@ class Vigilant(TasksUI, SitesUI, ApplicationsUI, CustomizationUI, RobotUI):
         status_area.pack(side='left', fill='x', expand=True)
         self.status = tk.Label(status_area, bg=PANEL, fg=INK, font=('DejaVu Sans', 11, 'bold'))
         self.status.pack(anchor='w')
+        self.session_elapsed = tk.Label(status_area, text='Tempo de sessão  00:00:00', bg=PANEL, fg=BLUE, font=('DejaVu Sans Mono', 10), anchor='w')
+        self.session_elapsed.pack(anchor='w')
         self.connection = tk.Label(status_area, bg=PANEL, fg=BLUE, font=('DejaVu Sans', 8), anchor='w', wraplength=340, justify='left')
         self.connection.pack(anchor='w')
         self.session_button = tk.Button(bar, command=self.toggle_session, bg=ACCENT, fg=INK, activebackground='#826cf1', activeforeground=INK, relief='flat', padx=12, pady=7)
@@ -197,12 +200,16 @@ class Vigilant(TasksUI, SitesUI, ApplicationsUI, CustomizationUI, RobotUI):
             if not monitoring_available():
                 messagebox.showwarning('Monitoramento de aplicativos indisponível', 'O bloqueio de aplicativos requer uma sessão X11, xdotool e xprop. O bloqueio de sites pode continuar funcionando.', parent=self.root)
             self.active = True
+            self.session_started = time.monotonic()
+            self.update_session_elapsed()
             self.publish()
             self.show_robot()
             self.refresh()
 
     def end_session(self):
+        self.update_session_elapsed()
         self.active = False
+        self.session_started = None
         self.publish()
         self.hide_bubble()
         if self.robot:
@@ -210,8 +217,16 @@ class Vigilant(TasksUI, SitesUI, ApplicationsUI, CustomizationUI, RobotUI):
             self.robot = None
         self.refresh()
 
+    def update_session_elapsed(self):
+        if self.session_started is not None:
+            seconds = int(time.monotonic() - self.session_started)
+            hours, seconds = divmod(seconds, 3600)
+            minutes, seconds = divmod(seconds, 60)
+            self.session_elapsed.config(text=f'Tempo de sessão  {hours:02d}:{minutes:02d}:{seconds:02d}')
+
     def tick(self):
         if self.active:
+            self.update_session_elapsed()
             with self.server.state_lock:
                 seen = dict(self.server.last_seen)
             now = time.monotonic()

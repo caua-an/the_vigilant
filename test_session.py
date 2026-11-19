@@ -20,6 +20,34 @@ from vigilant.sound import alert_sound
 
 @unittest.skipUnless(os.environ.get('DISPLAY'), 'Requer uma sessão gráfica X11')
 class SessionTest(unittest.TestCase):
+    def test_session_elapsed_time_stops_and_resets(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('vigilant.app.PORT', 0):
+            root = tk.Tk()
+            root.withdraw()
+            app = Vigilant(root)
+            try:
+                app.commit({'tasks': [{'text': 'Estudar', 'done': False}], 'sites': [], 'apps': []})
+                with patch('vigilant.app.monitoring_available', return_value=True), patch('vigilant.app.time.monotonic', return_value=100) as clock:
+                    app.toggle_session()
+                    self.assertIn('00:00:00', app.session_elapsed.cget('text'))
+                    clock.return_value = 3765
+                    root.after_cancel(app.tick_job)
+                    app.tick()
+                    self.assertIn('01:01:05', app.session_elapsed.cget('text'))
+                    clock.return_value = 3770
+                    app.task_list.selection_set(0)
+                    with patch('vigilant.tasks.messagebox.showinfo'):
+                        app.toggle_task()
+                    self.assertIn('01:01:10', app.session_elapsed.cget('text'))
+                    clock.return_value = 4000
+                    app.update_session_elapsed()
+                    self.assertIn('01:01:10', app.session_elapsed.cget('text'))
+                    app.toggle_session()
+                    self.assertIn('00:00:00', app.session_elapsed.cget('text'))
+                    app.end_session()
+            finally:
+                app.close()
+
     def test_sidebar_and_responsive_sites(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(core, 'DATA_FILE', Path(temp) / 'data.json'), patch('vigilant.app.PORT', 0):
             root = tk.Tk()
